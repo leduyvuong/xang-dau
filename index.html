@@ -207,7 +207,13 @@ t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="arra
     }
     .card-meta { font-size: 11.5px; color: var(--muted); }
     .card-chart { width: 100%; height: auto; display: block; margin: 2px 0 4px; }
+    .chart-card { cursor: pointer; transition: border-color .15s, box-shadow .15s, transform .15s; }
+    .chart-card:hover, .chart-card:focus-visible {
+      border-color: var(--green-2); box-shadow: 0 10px 24px rgba(20, 108, 67, .12); transform: translateY(-2px);
+      outline: none;
+    }
     .card-legend { display: flex; flex-direction: column; gap: 4px; }
+    .card-more { margin-top: 6px; font-size: 11px; font-weight: 700; color: var(--green); }
     .legend-row { display: flex; align-items: center; gap: 7px; font-size: 11.5px; }
     .row-dot { width: 9px; height: 9px; border-radius: 2px; flex: none; }
     .row-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
@@ -218,6 +224,36 @@ t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="arra
     }
     .chart-tip.show { opacity: 1; }
     .chart-legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 18px; }
+    .legend-item { display: flex; align-items: center; gap: 7px; font-size: 12.5px; max-width: 260px; }
+    .legend-item .dot { width: 11px; height: 11px; border-radius: 3px; flex: none; }
+    .legend-item .text { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    .card-modal { border: none; padding: 0; background: transparent; max-width: 860px; width: calc(100% - 32px); }
+    .card-modal::backdrop { background: rgba(14, 34, 23, .58); backdrop-filter: blur(3px); }
+    .card-modal-inner {
+      background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+      box-shadow: var(--shadow); overflow: hidden; max-height: 88vh; display: flex; flex-direction: column;
+    }
+    .modal-head {
+      display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
+      padding: 20px 22px 14px; border-bottom: 1px solid var(--line);
+    }
+    .modal-head h2 { margin: 0 0 5px; font-size: 18px; line-height: 1.3; }
+    .modal-body {
+      padding: 18px 22px 22px; overflow: auto;
+      display: grid; grid-template-columns: minmax(220px, 300px) minmax(0, 1fr); gap: 22px; align-items: start;
+    }
+    .modal-chart { width: 100%; height: auto; display: block; }
+    .modal-list { display: flex; flex-direction: column; }
+    .modal-row {
+      display: grid; grid-template-columns: 28px 11px minmax(0, 1fr) auto auto 52px;
+      gap: 9px; align-items: center; font-size: 12.5px; padding: 6px 0; border-bottom: 1px solid #eef3f0;
+    }
+    .modal-row:last-child { border-bottom: 0; }
+    .row-rank { color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; }
+    .row-trips { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .row-share { color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+    @media (max-width: 720px) { .modal-body { grid-template-columns: 1fr; } }
     .chart-caption { margin-top: 12px; font-size: 12.5px; color: var(--muted); }
 
     .toast {
@@ -399,6 +435,22 @@ t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="arra
     </div>
   </dialog>
 
+  <dialog id="cardModal" class="card-modal">
+    <div class="card-modal-inner">
+      <div class="modal-head">
+        <div>
+          <h2 id="cardModalTitle"></h2>
+          <p id="cardModalMeta" class="hint"></p>
+        </div>
+        <button id="cardModalClose" class="icon-btn" type="button" aria-label="Đóng">×</button>
+      </div>
+      <div class="modal-body">
+        <svg id="cardModalChart" class="modal-chart"></svg>
+        <div id="cardModalList" class="modal-list"></div>
+      </div>
+    </div>
+  </dialog>
+
   <div id="toast" class="toast"></div>
 
   <script>
@@ -469,7 +521,9 @@ t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="arra
         uploadTitle: $("uploadTitle"), uploadProgress: $("uploadProgress"), progressFill: $("progressFill"),
         progressText: $("progressText"), statGrid: $("statGrid"),
         chartGrid: $("chartGrid"), chartTip: $("chartTip"), circleTabs: $("circleTabs"),
-        chartLegend: $("chartLegend"), chartCaption: $("chartCaption")
+        chartLegend: $("chartLegend"), chartCaption: $("chartCaption"),
+        cardModal: $("cardModal"), cardModalTitle: $("cardModalTitle"), cardModalMeta: $("cardModalMeta"),
+        cardModalChart: $("cardModalChart"), cardModalList: $("cardModalList"), cardModalClose: $("cardModalClose")
       };
 
       const normalizeCache = new Map();
@@ -1548,21 +1602,22 @@ t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="arra
 
 
       // ---------------------------------------------------------------------------------
-      // Vòng tròn doanh thu — hai vành quanh một hub.
+      // Small multiples: một biểu đồ cho mỗi tuyến (hoặc mỗi xe).
       //
-      // The business being managed is the profitability of the tractors, so "Theo xe" is the
-      // default: outer ring = one wedge per truck, inner ring = that truck's wedge split by the
-      // routes it ran. "Theo tuyến" swaps the two. Either way EVERY entity is drawn — nothing is
-      // truncated into an "other" bucket — because this is the statistic, not a highlight reel.
+      // One donut per entity instead of one giant ring, so no slice is ever too thin to point at.
       //
-      // The eight largest wedges carry the fixed categorical slots (identity, labelled, in the
-      // legend); the long tail shares one neutral so no hue is ever cycled. Clicking a wedge
-      // opens it across the full circle, which is the only way the smallest slices become
-      // large enough to point at.
+      // Every inner entity gets its OWN colour — not just the top eight — and that colour follows
+      // the entity everywhere: 43F-00896 is the same colour on every card it appears in, in the
+      // shared key, and in the detail modal. The first eight slots are the validated categorical
+      // hues; beyond that hues are placed by the golden angle across three lightness tiers, which
+      // keeps neighbours apart in both hue and lightness, and each is darkened until it is legible
+      // against the white card.
+      //
+      // A card only has room to name its three biggest slices, so the card is clickable: the modal
+      // shows the same donut at full size with every single entity listed, nothing folded away.
       // ---------------------------------------------------------------------------------
 
       const TOP_HUES = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"];
-      const TAIL_HUE = "#9aa8a0";
       const INK = "#17211b", MUTED = "#66746b", SURFACE = "#ffffff";
 
       function relativeLuminance(color) {
@@ -1581,13 +1636,33 @@ t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="arra
 
       const readableInk = (fill) => contrastRatio(fill, INK) >= contrastRatio(fill, SURFACE) ? INK : SURFACE;
 
-      // Lighter steps of the wedge's own hue, stopped before a slice fades into the page.
-      function shadesOf(hue, count) {
-        const toWhite = d3.interpolateLab(hue, SURFACE);
-        let limit = .62;
-        while (limit > 0 && contrastRatio(toWhite(limit), SURFACE) < 2) limit -= .04;
-        return Array.from({ length: count }, (unused, i) =>
-          toWhite(count < 2 ? 0 : (i / (count - 1)) * Math.max(0, limit)));
+      // One distinct colour per entity, as many as the data needs.
+      //
+      // Hues advance by the golden angle so successive ranks land far apart on the wheel, and
+      // lightness/chroma tiers cycle underneath so that when the hue wheel wraps round again the
+      // repeat is a clearly lighter or darker version. More entities means more tiers, which is
+      // what keeps 223 routes as separable as 62 trucks. Two escape hatches follow: darken until
+      // the colour is visible on white, then nudge until it is not already taken.
+      function buildPalette(count) {
+        const colors = TOP_HUES.slice(0, Math.min(count, TOP_HUES.length));
+        const taken = new Set(colors);
+        const remaining = Math.max(0, count - TOP_HUES.length);
+        const tiers = Math.max(3, Math.ceil(remaining / 40));
+        for (let step = 0; step < remaining; step += 1) {
+          const tier = step % tiers;
+          const t = tiers < 2 ? .5 : tier / (tiers - 1);
+          const hue = (step * 137.508 + 24) % 360;
+          let lightness = 36 + t * 40;
+          let chroma = 64 - t * 26;
+          const hex = () => d3.hcl(hue, chroma, lightness).formatHex();
+          while (lightness > 24 && contrastRatio(hex(), SURFACE) < 1.9) lightness -= 4;
+          let attempts = 0;
+          while (taken.has(hex()) && attempts < 24) { lightness += attempts % 2 ? 2.5 : -2.5; attempts += 1; }
+          const color = hex();
+          taken.add(color);
+          colors.push(color);
+        }
+        return colors;
       }
 
       const CIRCLE_DIMENSIONS = {
@@ -1672,8 +1747,6 @@ t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="arra
         const wedges = list.sort((a, b) => b.revenue - a.revenue)
           .map((group, index) => ({
             ...group, rank: index + 1,
-            hue: index < TOP_HUES.length ? TOP_HUES[index] : TAIL_HUE,
-            named: index < TOP_HUES.length,
             parts: [...group.parts.values()].sort((a, b) => b.revenue - a.revenue)
           }));
         return { spec, wedges, total, rolledLanes, bundles, rawCount: groups.size };
@@ -1694,17 +1767,54 @@ t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="arra
 
       const hideChartTip = () => el.chartTip.classList.remove("show");
 
-      // ---------------------------------------------------------------------------------
-      // Small multiples: một biểu đồ cho mỗi tuyến (hoặc mỗi xe).
-      //
-      // One donut per entity instead of one giant ring. Every route gets its own full circle,
-      // so the slice-too-thin-to-hover problem disappears entirely — the reason d3's own advice
-      // for "too many series" is small multiples rather than more hues.
-      //
-      // Colour follows the ENTITY, not its rank inside a card: the eight largest vehicles
-      // (globally) hold the eight categorical slots, so 43F-00896 is the same blue on every
-      // card it appears in and cards stay comparable. Everything else shares one neutral.
-      // ---------------------------------------------------------------------------------
+      // Built on demand rather than at load: nothing in this file should need d3 to merely parse.
+      const donutArc = (hole, ring) => d3.arc().innerRadius(hole).outerRadius(ring).padAngle(.02).cornerRadius(2);
+      const donutPie = () => d3.pie().sort(null).value((part) => part.revenue);
+
+      // Full breakdown of one card: same donut at readable size, plus every entity listed.
+      function openCardModal(wedge, context) {
+        const { spec, colorOf, total } = context;
+        el.cardModalTitle.textContent = `${wedge.rank}. ${wedge.label}`;
+        el.cardModalMeta.textContent =
+          `${formatNumber(wedge.revenue)} đ · ${formatPercent(wedge.revenue / total)} tổng doanh thu · `
+          + `${formatNumber(wedge.trips)} chuyến · đủ ${wedge.parts.length} ${spec.innerLabel}, không bỏ sót`;
+
+        const R = 150, arc = donutArc(84, 138);
+        const svg = d3.select(el.cardModalChart)
+          .attr("viewBox", `${-R} ${-R} ${R * 2} ${R * 2}`)
+          .attr("preserveAspectRatio", "xMidYMid meet")
+          .style("font-family", "inherit");
+        svg.selectAll("*").remove();
+
+        svg.append("g").attr("class", "slices").selectAll("path")
+          .data(donutPie()(wedge.parts), (d) => d.data.key)
+          .join("path")
+          .attr("d", arc)
+          .attr("fill", (d) => colorOf.get(d.data.key))
+          .attr("stroke", SURFACE).attr("stroke-width", 1.5)
+          .append("title")
+          .text((d) => `${d.data.label}\n${formatNumber(d.data.trips)} chuyến · ${formatNumber(d.data.revenue)} đ`
+            + `\n${formatPercent(d.data.revenue / wedge.revenue)} của ${spec.outerLabel} này`);
+
+        svg.append("text").attr("text-anchor", "middle").attr("y", -4)
+          .attr("fill", INK).style("font-size", "31px").style("font-weight", 660)
+          .text(formatCompact(wedge.revenue));
+        svg.append("text").attr("text-anchor", "middle").attr("y", 22)
+          .attr("fill", MUTED).style("font-size", "12.5px")
+          .text(`${wedge.parts.length} ${spec.innerLabel} · ${formatNumber(wedge.trips)} chuyến`);
+
+        el.cardModalList.innerHTML = wedge.parts.map((part, index) => `
+          <div class="modal-row">
+            <span class="row-rank">${index + 1}</span>
+            <span class="row-dot" style="background:${colorOf.get(part.key)}"></span>
+            <span class="row-name" title="${escapeHtml(part.label)}">${escapeHtml(part.label)}</span>
+            <span class="row-trips">${formatNumber(part.trips)} chuyến</span>
+            <span class="row-value">${formatNumber(part.revenue)} đ</span>
+            <span class="row-share">${formatPercent(part.revenue / wedge.revenue)}</span>
+          </div>`).join("");
+
+        if (typeof el.cardModal.showModal === "function" && !el.cardModal.open) el.cardModal.showModal();
+      }
 
       function renderChartGrid(records) {
         const { spec, wedges, total, rolledLanes, bundles, rawCount } = buildRings(records, state.circleBy);
@@ -1716,7 +1826,7 @@ t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="arra
           return;
         }
 
-        // one global colour per inner entity, ranked by its total across every card
+        // one colour per inner entity, ranked by its total across every card
         const totals = new Map();
         const names = new Map();
         for (const wedge of wedges) {
@@ -1726,17 +1836,17 @@ t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="arra
           }
         }
         const ranked = [...totals.entries()].sort((a, b) => b[1] - a[1]);
-        const colorOf = new Map(ranked.map(([key], i) => [key, i < TOP_HUES.length ? TOP_HUES[i] : TAIL_HUE]));
-        const named = ranked.slice(0, TOP_HUES.length);
+        const palette = buildPalette(ranked.length);
+        const colorOf = new Map(ranked.map(([key], i) => [key, palette[i]]));
+        const context = { spec, colorOf, total };
 
-        const R = 100, HOLE = 58, RING = 92;
-        const arc = d3.arc().innerRadius(HOLE).outerRadius(RING).padAngle(.02).cornerRadius(2);
-        const pie = d3.pie().sort(null).value((part) => part.revenue);
+        const R = 100, arc = donutArc(58, 92);
 
         const cards = grid.selectAll("article.chart-card")
           .data(wedges, (wedge) => wedge.key)
           .join((enter) => {
-            const card = enter.append("article").attr("class", "chart-card");
+            const card = enter.append("article").attr("class", "chart-card")
+              .attr("role", "button").attr("tabindex", 0);
             const head = card.append("div").attr("class", "card-head");
             head.append("div").attr("class", "card-title");
             head.append("div").attr("class", "card-meta");
@@ -1752,7 +1862,12 @@ t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="arra
                   .attr("y", 18).attr("fill", MUTED).style("font-size", "11px");
               });
             card.append("div").attr("class", "card-legend");
+            card.append("div").attr("class", "card-more");
             return card;
+          })
+          .on("click", (event, wedge) => openCardModal(wedge, context))
+          .on("keydown", (event, wedge) => {
+            if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openCardModal(wedge, context); }
           });
 
         cards.select(".card-title").text((wedge) => `${wedge.rank}. ${wedge.label}`);
@@ -1760,15 +1875,15 @@ t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="arra
           `${formatNumber(wedge.revenue)} đ · ${formatNumber(wedge.trips)} chuyến · ${wedge.parts.length} ${spec.innerLabel}`);
         cards.select("svg .hub-value").text((wedge) => formatCompact(wedge.revenue));
         cards.select("svg .hub-meta").text((wedge) => `${formatPercent(wedge.revenue / total)} tổng`);
+        cards.select(".card-more").text((wedge) => `Bấm để xem đủ ${wedge.parts.length} ${spec.innerLabel} →`);
 
         cards.select("g.slices").each(function (wedge) {
           d3.select(this).selectAll("path")
-            .data(pie(wedge.parts), (d) => d.data.key)
+            .data(donutPie()(wedge.parts), (d) => d.data.key)
             .join("path")
             .attr("d", arc)
-            .attr("fill", (d) => colorOf.get(d.data.key) || TAIL_HUE)
+            .attr("fill", (d) => colorOf.get(d.data.key))
             .attr("stroke", SURFACE).attr("stroke-width", 1)
-            .style("cursor", "default")
             .on("pointermove", (event, d) => showChartTip(
               `<b>${escapeHtml(d.data.label)}</b><br>`
               + `${spec.innerLabel === "xe" ? "trên tuyến" : "của xe"} ${escapeHtml(wedge.label)}<br>`
@@ -1778,12 +1893,12 @@ t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="arra
             .on("pointerleave", hideChartTip);
         });
 
-        // the three biggest slices are named on the card; the rest are one summary line
+        // the card names its three biggest slices; the modal names all of them
         cards.select(".card-legend").each(function (wedge) {
           const top = wedge.parts.slice(0, 3);
           const rest = wedge.parts.length - top.length;
           const rows = top.map((part) => ({
-            color: colorOf.get(part.key) || TAIL_HUE,
+            color: colorOf.get(part.key),
             text: part.label,
             value: `${formatCompact(part.revenue)} · ${formatPercent(part.revenue / wedge.revenue)}`
           }));
@@ -1803,27 +1918,27 @@ t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="arra
             });
         });
 
-        // shared legend so the eight named colours mean the same thing on every card
+        // shared key: every entity, so a colour can always be looked up
         d3.select(el.chartLegend).selectAll("span.legend-item")
-          .data(named, (entry) => entry[0])
+          .data(ranked, (entry) => entry[0])
           .join((enter) => {
-            const item = enter.append("span").attr("class", "legend-item")
-              .style("display", "flex").style("align-items", "center").style("gap", "7px").style("font-size", "12.5px");
-            item.append("span").attr("class", "dot")
-              .style("width", "11px").style("height", "11px").style("border-radius", "3px").style("flex", "none");
-            item.append("span").attr("class", "text").style("color", "var(--text)");
+            const item = enter.append("span").attr("class", "legend-item");
+            item.append("span").attr("class", "dot");
+            item.append("span").attr("class", "text");
             return item;
           })
           .call((item) => {
+            item.attr("title", (entry) => `${names.get(entry[0])} — ${formatNumber(entry[1])} đ`);
             item.select("span.dot").style("background", (entry) => colorOf.get(entry[0]));
-            item.select("span.text").text((entry) => `${names.get(entry[0])} — ${formatCompact(entry[1])}`);
+            item.select("span.text").text((entry, index) => `${index + 1}. ${names.get(entry[0])} — ${formatCompact(entry[1])}`);
           });
 
         el.chartCaption.textContent =
           `${wedges.length} biểu đồ — mỗi ${spec.outerLabel} một hình, chia theo ${spec.innerLabel}, xếp từ doanh thu cao xuống thấp. `
           + `Tổng ${formatNumber(total)} đ, đủ 100%, không bỏ sót. `
           + (rolledLanes ? `${rolledLanes}/${rawCount} tuyến nhỏ (mỗi tuyến dưới 0,5% doanh thu) gộp thành ${bundles} cụm “điểm giao lẻ” theo kho đi. ` : "")
-          + `Màu gắn với ${spec.innerLabel}: 8 ${spec.innerLabel} lớn nhất có màu riêng và giữ nguyên màu ở mọi hình.`;
+          + `Đủ ${ranked.length} ${spec.innerLabel}, mỗi ${spec.innerLabel} một màu riêng và giữ nguyên màu ở mọi hình. `
+          + `Bấm vào một hình để xem đủ danh sách ${spec.innerLabel} của ${spec.outerLabel} đó.`;
       }
 
       const CIRCLE_HINTS = {
@@ -1852,6 +1967,7 @@ t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="arra
         el.statGrid.innerHTML = ""; el.chartGrid.innerHTML = "";
         el.chartLegend.innerHTML = ""; el.chartCaption.textContent = "";
         state.circleBy = "route";
+        if (el.cardModal.open) el.cardModal.close();
         openUpload();
         toast("Đã xóa dữ liệu khỏi trình duyệt");
       }
@@ -1863,6 +1979,10 @@ t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="arra
         splitVehicle, duplicateKey, getActiveRecords, renderAll, renderOverview, renderResults,
         clearAll, openUpload, closeUpload, state
       };
+
+      const closeCardModal = () => { if (el.cardModal.open) el.cardModal.close(); };
+      el.cardModalClose.addEventListener("click", closeCardModal);
+      el.cardModal.addEventListener("click", (event) => { if (event.target === el.cardModal) closeCardModal(); });
 
       el.openUpload.addEventListener("click", openUpload);
       el.closeUpload.addEventListener("click", closeUpload);
