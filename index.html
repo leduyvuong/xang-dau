@@ -250,6 +250,16 @@ t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="arra
       gap: 9px; align-items: center; font-size: 12.5px; padding: 6px 0; border-bottom: 1px solid #eef3f0;
     }
     .modal-row:last-child { border-bottom: 0; }
+    .modal-list .modal-row {
+      cursor: pointer; padding: 6px; margin: 0 -6px; border-radius: 8px;
+    }
+    .modal-list .modal-row:hover, .modal-list .modal-row:focus-visible {
+      background: var(--panel-soft); outline: none; box-shadow: inset 0 0 0 1px var(--line);
+    }
+    .trip-modal { max-width: 1180px; }
+    .trip-modal .modal-body { display: block; }
+    .modal-head-actions { display: flex; align-items: center; gap: 8px; flex: none; }
+    .trip-scope { margin: 0 0 12px; }
     .row-rank { color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; }
     .row-trips { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
     .row-share { color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
@@ -451,6 +461,27 @@ t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="arra
     </div>
   </dialog>
 
+  <dialog id="tripModal" class="card-modal trip-modal">
+    <div class="card-modal-inner">
+      <div class="modal-head">
+        <div>
+          <h2 id="tripModalTitle"></h2>
+          <p id="tripModalMeta" class="hint"></p>
+        </div>
+        <div class="modal-head-actions">
+          <button id="tripModalBack" class="btn btn-ghost btn-sm" type="button">← Quay lại</button>
+          <button id="tripModalExport" class="btn btn-ghost btn-sm" type="button">Xuất CSV</button>
+          <button id="tripModalClose" class="icon-btn" type="button" aria-label="Đóng">×</button>
+        </div>
+      </div>
+      <div class="modal-body">
+        <div id="tripModalStats" class="stat-grid"></div>
+        <div id="tripModalScope" class="trip-scope"></div>
+        <div id="tripModalTable" class="table-wrap"></div>
+      </div>
+    </div>
+  </dialog>
+
   <div id="toast" class="toast"></div>
 
   <script>
@@ -523,7 +554,10 @@ t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="arra
         chartGrid: $("chartGrid"), chartTip: $("chartTip"), circleTabs: $("circleTabs"),
         chartLegend: $("chartLegend"), chartCaption: $("chartCaption"),
         cardModal: $("cardModal"), cardModalTitle: $("cardModalTitle"), cardModalMeta: $("cardModalMeta"),
-        cardModalChart: $("cardModalChart"), cardModalList: $("cardModalList"), cardModalClose: $("cardModalClose")
+        cardModalChart: $("cardModalChart"), cardModalList: $("cardModalList"), cardModalClose: $("cardModalClose"),
+        tripModal: $("tripModal"), tripModalTitle: $("tripModalTitle"), tripModalMeta: $("tripModalMeta"),
+        tripModalStats: $("tripModalStats"), tripModalScope: $("tripModalScope"), tripModalTable: $("tripModalTable"),
+        tripModalBack: $("tripModalBack"), tripModalExport: $("tripModalExport"), tripModalClose: $("tripModalClose")
       };
 
       const normalizeCache = new Map();
@@ -1551,18 +1585,22 @@ t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="arra
         toast("Đã xuất file Excel tổng hợp");
       }
 
-      function exportCsv() {
-        if (!state.displayRows.length) return;
-        const isSummary = ["vehicle", "route", "vehicleRoute"].includes(state.view);
-        const data = isSummary ? exportRowsForSummary(state.displayRows, state.view) : exportRowsForRaw(state.displayRows);
-        const sheet = XLSX.utils.json_to_sheet(data);
+      function downloadCsv(rows, filename) {
+        const sheet = XLSX.utils.json_to_sheet(rows);
         const csv = XLSX.utils.sheet_to_csv(sheet, { FS: "," });
         const blob = new Blob(["\ufeff", csv], { type: "text/csv;charset=utf-8" });
         const link = document.createElement("a");
         link.href = URL.createObjectURL(blob);
-        link.download = `du_lieu_${state.view}_${new Date().toISOString().slice(0, 10)}.csv`;
+        link.download = filename;
         link.click();
         setTimeout(() => URL.revokeObjectURL(link.href), 500);
+      }
+
+      function exportCsv() {
+        if (!state.displayRows.length) return;
+        const isSummary = ["vehicle", "route", "vehicleRoute"].includes(state.view);
+        const data = isSummary ? exportRowsForSummary(state.displayRows, state.view) : exportRowsForRaw(state.displayRows);
+        downloadCsv(data, `du_lieu_${state.view}_${new Date().toISOString().slice(0, 10)}.csv`);
       }
 
       // ---------------------------------------------------------------------------------
@@ -1703,10 +1741,12 @@ t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="arra
           group.revenue += record.revenue || 0;
           group.trips += 1;
           const partKey = spec.innerKey(record) || "?";
-          if (!group.parts.has(partKey)) group.parts.set(partKey, { key: partKey, label: spec.innerName(record), revenue: 0, trips: 0 });
+          if (!group.parts.has(partKey)) group.parts.set(partKey, { key: partKey, label: spec.innerName(record), revenue: 0, trips: 0, records: [] });
           const part = group.parts.get(partKey);
           part.revenue += record.revenue || 0;
           part.trips += 1;
+          // Kept so a slice can be drilled into: the trips listed are exactly the trips summed here.
+          part.records.push(record);
         }
         let list = [...groups.values()].filter((group) => group.revenue > 0);
         const total = d3.sum(list, (group) => group.revenue);
@@ -1730,10 +1770,11 @@ t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="arra
             bundle.revenue += group.revenue;
             bundle.trips += group.trips;
             for (const [partKey, part] of group.parts) {
-              if (!bundle.parts.has(partKey)) bundle.parts.set(partKey, { key: partKey, label: part.label, revenue: 0, trips: 0 });
+              if (!bundle.parts.has(partKey)) bundle.parts.set(partKey, { key: partKey, label: part.label, revenue: 0, trips: 0, records: [] });
               const merged = bundle.parts.get(partKey);
               merged.revenue += part.revenue;
               merged.trips += part.trips;
+              for (const item of part.records) merged.records.push(item);
             }
           }
           bundles = bundleMap.size;
@@ -1771,13 +1812,110 @@ t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="arra
       const donutArc = (hole, ring) => d3.arc().innerRadius(hole).outerRadius(ring).padAngle(.02).cornerRadius(2);
       const donutPie = () => d3.pie().sort(null).value((part) => part.revenue);
 
+      // ---------------------------------------------------------------------------------
+      // Drill-down. A card shows one entity split into its parts, but a part is still a total.
+      // Clicking a part opens the trips behind it, so every figure on screen can be traced to
+      // the exact rows — and the file, sheet and row number — it was summed from.
+      // ---------------------------------------------------------------------------------
+
+      const cardModalState = { wedge: null, context: null };
+      const tripModalState = { records: [], name: "" };
+
+      const tripHeaders = [
+        { key: "departureDate", label: "Ngày xuất" },
+        { key: "tripId", label: "PXH / Mã chuyến" },
+        { key: "tractor", label: "Xe" },
+        { key: "route", label: "Tuyến" },
+        { key: "product", label: "Mặt hàng" },
+        { key: "billableQty", label: "SL tính cước", num: true, render: formatNumber },
+        { key: "unitPrice", label: "Đơn giá", num: true, render: formatNumber },
+        { key: "revenue", label: "Doanh thu", num: true, render: formatNumber },
+        { key: "compensation", label: "Bồi thường", num: true, render: formatNumber },
+        { key: "directCost", label: "Chi phí", num: true, render: formatNumber },
+        { key: "contribution", label: "LN gộp", num: true, render: formatNumber },
+        { key: "source", label: "Nguồn" }
+      ];
+
+      function tripTotals(records) {
+        const revenue = records.reduce((sum, r) => sum + (r.revenue || 0), 0);
+        const compensation = records.reduce((sum, r) => sum + (r.compensation || 0), 0);
+        const directCost = records.reduce((sum, r) => sum + (r.directCost || 0), 0);
+        const billableQty = records.reduce((sum, r) => sum + (r.billableQty || 0), 0);
+        return { revenue, compensation, directCost, billableQty, contribution: revenue - compensation - directCost };
+      }
+
+      // Sorted by date so the list reads like a logbook. Trips whose date column was missing
+      // sink to the bottom instead of leading the table, which an empty string would do.
+      function renderTripModal({ name, scope, records, toggleLabel, onToggle }) {
+        tripModalState.records = records;
+        tripModalState.name = name;
+        const totals = tripTotals(records);
+
+        el.tripModalTitle.textContent = name;
+        el.tripModalMeta.textContent =
+          `${scope} · ${formatNumber(records.length)} chuyến · ${formatNumber(totals.revenue)} đ doanh thu`;
+        el.tripModalStats.innerHTML = [
+          ["Chuyến", formatNumber(records.length), "dòng dữ liệu gốc"],
+          ["SL tính cước", formatNumber(totals.billableQty), ""],
+          ["Doanh thu", formatCompact(totals.revenue), `${formatNumber(totals.revenue)} đ`],
+          ["Bồi thường", formatCompact(totals.compensation), ""],
+          ["Chi phí", formatCompact(totals.directCost), ""],
+          ["Lợi nhuận gộp", formatCompact(totals.contribution),
+            totals.revenue ? `Biên ${formatPercent(totals.contribution / totals.revenue)}` : ""]
+        ].map(([label, value, note]) => `
+          <div class="stat">
+            <div class="stat-label">${escapeHtml(label)}</div>
+            <div class="stat-value">${escapeHtml(value)}</div>
+            <div class="stat-note">${escapeHtml(note)}</div>
+          </div>`).join("");
+
+        el.tripModalScope.innerHTML = toggleLabel
+          ? `<button class="btn btn-ghost btn-sm" type="button">${escapeHtml(toggleLabel)}</button>` : "";
+        const toggle = el.tripModalScope.querySelector("button");
+        if (toggle && onToggle) toggle.addEventListener("click", onToggle);
+
+        const rows = [...records]
+          .sort((a, b) => String(a.departureDate || "9999").localeCompare(String(b.departureDate || "9999"))
+            || a.sourceRow - b.sourceRow)
+          .map((record) => ({ ...record, source: `${record.fileName} · ${record.sheetName} · dòng ${record.sourceRow}` }));
+        el.tripModalTable.innerHTML = tableHtml(tripHeaders, rows);
+
+        hideChartTip();
+        if (el.cardModal.open) el.cardModal.close();
+        if (typeof el.tripModal.showModal === "function" && !el.tripModal.open) el.tripModal.showModal();
+      }
+
+      // scope "slice" — this part inside this card only. scope "all" — the same part wherever it
+      // appears, i.e. every trip that truck ran, not just its trips on the route that was clicked.
+      function openSliceTrips(context, wedge, part, scope) {
+        const { spec, records } = context;
+        cardModalState.wedge = wedge;
+        cardModalState.context = context;
+        const everywhere = records.filter((record) =>
+          spec.outerKey(record) && (spec.innerKey(record) || "?") === part.key);
+        const all = scope === "all";
+        const canToggle = everywhere.length > part.records.length;
+        renderTripModal({
+          name: part.label,
+          scope: all ? `trên mọi ${spec.outerLabel}` : `${spec.outerLabel}: ${wedge.label}`,
+          records: all ? everywhere : part.records,
+          toggleLabel: !canToggle ? ""
+            : all ? `← Chỉ xem ${formatNumber(part.records.length)} chuyến trên ${spec.outerLabel} ${wedge.label}`
+              : `Xem tất cả ${formatNumber(everywhere.length)} chuyến của ${part.label} trên mọi ${spec.outerLabel} →`,
+          onToggle: () => openSliceTrips(context, wedge, part, all ? "slice" : "all")
+        });
+      }
+
       // Full breakdown of one card: same donut at readable size, plus every entity listed.
       function openCardModal(wedge, context) {
         const { spec, colorOf, total } = context;
+        cardModalState.wedge = wedge;
+        cardModalState.context = context;
         el.cardModalTitle.textContent = `${wedge.rank}. ${wedge.label}`;
         el.cardModalMeta.textContent =
           `${formatNumber(wedge.revenue)} đ · ${formatPercent(wedge.revenue / total)} tổng doanh thu · `
-          + `${formatNumber(wedge.trips)} chuyến · đủ ${wedge.parts.length} ${spec.innerLabel}, không bỏ sót`;
+          + `${formatNumber(wedge.trips)} chuyến · đủ ${wedge.parts.length} ${spec.innerLabel}, không bỏ sót. `
+          + `Bấm một ${spec.innerLabel} để xem từng chuyến.`;
 
         const R = 150, arc = donutArc(84, 138);
         const svg = d3.select(el.cardModalChart)
@@ -1786,15 +1924,18 @@ t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="arra
           .style("font-family", "inherit");
         svg.selectAll("*").remove();
 
-        svg.append("g").attr("class", "slices").selectAll("path")
+        const slices = svg.append("g").attr("class", "slices").selectAll("path")
           .data(donutPie()(wedge.parts), (d) => d.data.key)
           .join("path")
           .attr("d", arc)
           .attr("fill", (d) => colorOf.get(d.data.key))
           .attr("stroke", SURFACE).attr("stroke-width", 1.5)
-          .append("title")
+          .style("cursor", "pointer")
+          .on("click", (event, d) => openSliceTrips(context, wedge, d.data, "slice"));
+        slices.append("title")
           .text((d) => `${d.data.label}\n${formatNumber(d.data.trips)} chuyến · ${formatNumber(d.data.revenue)} đ`
-            + `\n${formatPercent(d.data.revenue / wedge.revenue)} của ${spec.outerLabel} này`);
+            + `\n${formatPercent(d.data.revenue / wedge.revenue)} của ${spec.outerLabel} này`
+            + `\nBấm để xem từng chuyến`);
 
         svg.append("text").attr("text-anchor", "middle").attr("y", -4)
           .attr("fill", INK).style("font-size", "31px").style("font-weight", 660)
@@ -1804,7 +1945,7 @@ t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="arra
           .text(`${wedge.parts.length} ${spec.innerLabel} · ${formatNumber(wedge.trips)} chuyến`);
 
         el.cardModalList.innerHTML = wedge.parts.map((part, index) => `
-          <div class="modal-row">
+          <div class="modal-row" role="button" tabindex="0" data-index="${index}" title="Bấm để xem ${formatNumber(part.trips)} chuyến">
             <span class="row-rank">${index + 1}</span>
             <span class="row-dot" style="background:${colorOf.get(part.key)}"></span>
             <span class="row-name" title="${escapeHtml(part.label)}">${escapeHtml(part.label)}</span>
@@ -1838,7 +1979,7 @@ t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="arra
         const ranked = [...totals.entries()].sort((a, b) => b[1] - a[1]);
         const palette = buildPalette(ranked.length);
         const colorOf = new Map(ranked.map(([key], i) => [key, palette[i]]));
-        const context = { spec, colorOf, total };
+        const context = { spec, colorOf, total, records };
 
         const R = 100, arc = donutArc(58, 92);
 
@@ -1884,13 +2025,19 @@ t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="arra
             .attr("d", arc)
             .attr("fill", (d) => colorOf.get(d.data.key))
             .attr("stroke", SURFACE).attr("stroke-width", 1)
+            .style("cursor", "pointer")
             .on("pointermove", (event, d) => showChartTip(
               `<b>${escapeHtml(d.data.label)}</b><br>`
               + `${spec.innerLabel === "xe" ? "trên tuyến" : "của xe"} ${escapeHtml(wedge.label)}<br>`
               + `${formatNumber(d.data.trips)} chuyến · <b>${formatNumber(d.data.revenue)} đ</b><br>`
-              + `${formatPercent(d.data.revenue / wedge.revenue)} của ${spec.outerLabel} này`,
+              + `${formatPercent(d.data.revenue / wedge.revenue)} của ${spec.outerLabel} này<br>`
+              + `<i>Bấm để xem từng chuyến</i>`,
               event.clientX, event.clientY))
-            .on("pointerleave", hideChartTip);
+            .on("pointerleave", hideChartTip)
+            .on("click", (event, d) => {
+              event.stopPropagation();
+              openSliceTrips(context, wedge, d.data, "slice");
+            });
         });
 
         // the card names its three biggest slices; the modal names all of them
@@ -1898,16 +2045,25 @@ t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="arra
           const top = wedge.parts.slice(0, 3);
           const rest = wedge.parts.length - top.length;
           const rows = top.map((part) => ({
+            part,
             color: colorOf.get(part.key),
             text: part.label,
             value: `${formatCompact(part.revenue)} · ${formatPercent(part.revenue / wedge.revenue)}`
           }));
           if (rest > 0) {
             const restRevenue = d3.sum(wedge.parts.slice(3), (part) => part.revenue);
-            rows.push({ color: null, text: `+${rest} ${spec.innerLabel} khác`, value: formatCompact(restRevenue) });
+            // No part attached: this row is a remainder, so it falls through to the card click
+            // and opens the full breakdown, which is where the folded entities are listed.
+            rows.push({ part: null, color: null, text: `+${rest} ${spec.innerLabel} khác`, value: formatCompact(restRevenue) });
           }
           d3.select(this).selectAll("div.legend-row").data(rows).join("div")
             .attr("class", "legend-row")
+            .style("cursor", "pointer")
+            .on("click", (event, d) => {
+              if (!d.part) return;
+              event.stopPropagation();
+              openSliceTrips(context, wedge, d.part, "slice");
+            })
             .call((row) => {
               row.selectAll("*").remove();
               row.append("span").attr("class", "row-dot")
@@ -1938,7 +2094,8 @@ t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="arra
           + `Tổng ${formatNumber(total)} đ, đủ 100%, không bỏ sót. `
           + (rolledLanes ? `${rolledLanes}/${rawCount} tuyến nhỏ (mỗi tuyến dưới 0,5% doanh thu) gộp thành ${bundles} cụm “điểm giao lẻ” theo kho đi. ` : "")
           + `Đủ ${ranked.length} ${spec.innerLabel}, mỗi ${spec.innerLabel} một màu riêng và giữ nguyên màu ở mọi hình. `
-          + `Bấm vào một hình để xem đủ danh sách ${spec.innerLabel} của ${spec.outerLabel} đó.`;
+          + `Bấm vào một phần trong hình để xem từng chuyến của ${spec.innerLabel} đó; `
+          + `bấm vào khoảng trống của hình để xem đủ danh sách ${spec.innerLabel}.`;
       }
 
       const CIRCLE_HINTS = {
@@ -1968,6 +2125,7 @@ t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="arra
         el.chartLegend.innerHTML = ""; el.chartCaption.textContent = "";
         state.circleBy = "route";
         if (el.cardModal.open) el.cardModal.close();
+        if (el.tripModal.open) el.tripModal.close();
         openUpload();
         toast("Đã xóa dữ liệu khỏi trình duyệt");
       }
@@ -1983,6 +2141,32 @@ t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="arra
       const closeCardModal = () => { if (el.cardModal.open) el.cardModal.close(); };
       el.cardModalClose.addEventListener("click", closeCardModal);
       el.cardModal.addEventListener("click", (event) => { if (event.target === el.cardModal) closeCardModal(); });
+
+      function drillIntoCardRow(target) {
+        const row = target.closest(".modal-row");
+        if (!row || !cardModalState.wedge) return;
+        const part = cardModalState.wedge.parts[Number(row.dataset.index)];
+        if (part) openSliceTrips(cardModalState.context, cardModalState.wedge, part, "slice");
+      }
+      el.cardModalList.addEventListener("click", (event) => drillIntoCardRow(event.target));
+      el.cardModalList.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        drillIntoCardRow(event.target);
+      });
+
+      const closeTripModal = () => { if (el.tripModal.open) el.tripModal.close(); };
+      el.tripModalClose.addEventListener("click", closeTripModal);
+      el.tripModal.addEventListener("click", (event) => { if (event.target === el.tripModal) closeTripModal(); });
+      el.tripModalBack.addEventListener("click", () => {
+        closeTripModal();
+        if (cardModalState.wedge) openCardModal(cardModalState.wedge, cardModalState.context);
+      });
+      el.tripModalExport.addEventListener("click", () => {
+        if (!tripModalState.records.length) return;
+        const slug = normalizeText(tripModalState.name).replace(/\s+/g, "_") || "chuyen";
+        downloadCsv(exportRowsForRaw(tripModalState.records), `chuyen_${slug}_${new Date().toISOString().slice(0, 10)}.csv`);
+      });
 
       el.openUpload.addEventListener("click", openUpload);
       el.closeUpload.addEventListener("click", closeUpload);
